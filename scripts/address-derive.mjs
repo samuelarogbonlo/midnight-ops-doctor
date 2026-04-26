@@ -50,13 +50,22 @@ const HEX_RE = /^[0-9a-fA-F]+$/;
 
 const USAGE = `\
 Usage:
-  node address-derive.mjs <seed-hex> [--network preview|preprod]
+  node address-derive.mjs --seed-from-stdin [--network preview|preprod]
+  node address-derive.mjs <seed-hex>         [--network preview|preprod]   (deprecated, leaks seed)
   node address-derive.mjs --help
 
 Args:
+  --seed-from-stdin      Read the seed hex from stdin (recommended). Trailing
+                         whitespace/newlines are trimmed.
   <seed-hex>             32-byte (64 hex chars) or 64-byte (128 hex chars) seed.
                          Lace-compatible seeds are pbkdf2-full-64-byte (128 hex chars).
+                         WARNING: passing the seed in argv leaks it to /proc, ps,
+                         shell history, and audit logs. Prefer --seed-from-stdin.
   --network <name>       Midnight network ID (preview|preprod). Default: ${DEFAULT_NETWORK}.
+
+Examples:
+  echo "$MIDNIGHT_SEED" | node address-derive.mjs --seed-from-stdin
+  node address-derive.mjs --seed-from-stdin < seed.txt
 
 Output:
   JSON object on stdout with keys:
@@ -82,6 +91,7 @@ function parseArgs(args) {
 
   const positional = [];
   let network = DEFAULT_NETWORK;
+  let seedFromStdin = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--network') {
@@ -91,6 +101,8 @@ function parseArgs(args) {
       i++;
     } else if (arg.startsWith('--network=')) {
       network = arg.slice('--network='.length);
+    } else if (arg === '--seed-from-stdin') {
+      seedFromStdin = true;
     } else if (arg.startsWith('--')) {
       throw new Error(`Unknown flag: ${arg}`);
     } else {
@@ -98,15 +110,43 @@ function parseArgs(args) {
     }
   }
 
-  if (positional.length !== 1) {
-    throw new Error(`Expected exactly 1 positional arg (seed hex); got ${positional.length}`);
-  }
   if (!SUPPORTED_NETWORKS.includes(network)) {
     throw new Error(`--network must be one of {${SUPPORTED_NETWORKS.join(',')}}; got '${network}'`);
   }
 
+  if (seedFromStdin) {
+    if (positional.length !== 0) {
+      throw new Error('--seed-from-stdin is incompatible with positional <seed-hex>');
+    }
+    return { seedFromStdin: true, network };
+  }
+
+  if (positional.length !== 1) {
+    throw new Error(
+      `Expected exactly 1 positional arg (seed hex) or --seed-from-stdin; got ${positional.length} positional`,
+    );
+  }
+
   const seedHex = positional[0].trim().replace(/^0x/i, '');
-  return { seedHex, network };
+  return { seedHex, network, fromArgv: true };
+}
+
+async function readSeedFromStdin() {
+  // Refuse to block forever when stdin is a TTY — operator probably forgot
+  // to pipe input.
+  if (process.stdin.isTTY) {
+    throw new Error(
+      '--seed-from-stdin requires piped input (e.g. `echo "$SEED" | ...` or `... < seed.txt`)',
+    );
+  }
+  process.stdin.setEncoding('utf8');
+  let buf = '';
+  for await (const chunk of process.stdin) buf += chunk;
+  const seedHex = buf.trim().replace(/^0x/i, '');
+  if (seedHex.length === 0) {
+    throw new Error('--seed-from-stdin received empty input');
+  }
+  return seedHex;
 }
 
 function validateSeedHex(seedHex) {
@@ -245,8 +285,27 @@ async function main() {
     return;
   }
 
+  let seedHex = parsed.seedHex;
+  if (parsed.seedFromStdin) {
+    try {
+      seedHex = await readSeedFromStdin();
+    } catch (err) {
+      stderr.write(`ERROR: ${err.message}\n`);
+      process.exitCode = EXIT_BAD_INPUT;
+      return;
+    }
+  } else if (parsed.fromArgv) {
+    // Seed-via-argv leaks to /proc/$pid/cmdline, ps -ef, shell history, and
+    // audit logs. Loud one-line warning so the operator knows; not a failure
+    // (back-compat with prior invocation pattern).
+    stderr.write(
+      'WARN: seed passed via argv leaks to /proc, ps, shell history, audit logs.\n' +
+      'WARN: Prefer `--seed-from-stdin`. See `--help`.\n',
+    );
+  }
+
   try {
-    validateSeedHex(parsed.seedHex);
+    validateSeedHex(seedHex);
   } catch (err) {
     stderr.write(`ERROR: ${err.message}\n`);
     process.exitCode = EXIT_BAD_INPUT;
@@ -265,7 +324,7 @@ async function main() {
   }
 
   try {
-    const result = deriveAll({ seedHex: parsed.seedHex, network: parsed.network, sdk });
+    const result = deriveAll({ seedHex, network: parsed.network, sdk });
     stdout.write(JSON.stringify({ network: parsed.network, ...result }, null, 2) + '\n');
     process.exitCode = EXIT_OK;
   } catch (err) {

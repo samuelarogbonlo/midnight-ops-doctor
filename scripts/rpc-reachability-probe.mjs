@@ -64,8 +64,14 @@ function printUsage(stream = stdout) {
 }
 
 function parseArgs(args) {
-  if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
-    return { help: args.length > 0 };
+  // Explicit help flag → exit 0 with usage on stdout.
+  if (args.includes('--help') || args.includes('-h')) {
+    return { help: true, helpRequested: true };
+  }
+  // Zero args → print usage on stderr and exit BAD_INPUT (the previous
+  // behaviour returned `{help: false}` and crashed at url.protocol).
+  if (args.length === 0) {
+    return { help: true, helpRequested: false };
   }
   const positional = args.filter((a) => !a.startsWith('--'));
   if (positional.length !== 1) {
@@ -83,7 +89,7 @@ function parseArgs(args) {
   return { url };
 }
 
-function diagnose({ statusCode, edgeServer, scheme, networkErrorCode }) {
+function diagnose({ statusCode, edgeServer, scheme, networkErrorCode, rpcChainName, tcpFallback }) {
   if (networkErrorCode === 'ENOTFOUND' || networkErrorCode === 'EAI_AGAIN') {
     return {
       diagnosis: 'DNS resolution failed for the host.',
@@ -117,8 +123,37 @@ function diagnose({ statusCode, edgeServer, scheme, networkErrorCode }) {
         'and verify the URL host matches the cert.',
     };
   }
-  if (statusCode === STATUS_OK || statusCode === STATUS_SWITCHING_PROTOCOLS) {
+  // HTTP path: 200 with a JSON-RPC `result` (chain name) is the canonical
+  // healthy state. Status alone is not enough — a captive portal or a
+  // misrouted gateway can return 200 with HTML.
+  if (statusCode === STATUS_OK && typeof rpcChainName === 'string' && rpcChainName.length > 0) {
+    return {
+      diagnosis: `OK (chain='${rpcChainName}')`,
+      recommendation: 'Endpoint is reachable and answers JSON-RPC.',
+    };
+  }
+  // WSS path: a 101 Switching Protocols upgrade is the canonical healthy
+  // state. TCP-fallback paths reach this branch with a synthetic 101 — see
+  // the tcpFallback flag below for the caveat.
+  if (statusCode === STATUS_SWITCHING_PROTOCOLS) {
+    if (tcpFallback) {
+      return {
+        diagnosis: 'TCP-level reachable (HTTP-layer block NOT verified)',
+        recommendation:
+          'Socket opened, but `ws` was not installed so the WSS handshake was not attempted. ' +
+          'A blocking layer like AWS ELB completes TCP+TLS before issuing 403, so this verdict ' +
+          'CANNOT distinguish a healthy endpoint from a cloud-IP-blocked one. Run `npm i ws` ' +
+          'and re-run for a definitive verdict.',
+      };
+    }
     return { diagnosis: 'OK', recommendation: 'Endpoint is reachable.' };
+  }
+  if (statusCode === STATUS_OK) {
+    // 200 but no JSON-RPC result — likely a captive portal or wrong host.
+    return {
+      diagnosis: 'HTTP 200 but no JSON-RPC result. Endpoint reachable, but does not appear to be a Substrate RPC.',
+      recommendation: 'Verify the URL points at a Midnight node, not a load-balancer landing page or a captive portal.',
+    };
   }
   if (statusCode === STATUS_FORBIDDEN && (edgeServer || '').toLowerCase().startsWith('awselb/')) {
     return {
@@ -154,19 +189,27 @@ function diagnose({ statusCode, edgeServer, scheme, networkErrorCode }) {
 }
 
 async function probeHttps(url) {
+  // Probe with a real Substrate JSON-RPC method (`system_chain`). A bare
+  // HEAD/GET against a healthy Substrate node returns 405 because the node
+  // only accepts POST — using HEAD/GET here would label every healthy RPC
+  // as unreachable. `system_chain` is the cheapest meaningful method:
+  // returns the chain name string (e.g. "Midnight Preview").
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
   try {
-    let res;
-    try {
-      res = await fetch(url, { method: 'HEAD', signal: controller.signal });
-    } catch {
-      // Some endpoints reject HEAD with a network error; retry GET.
-      res = await fetch(url, { method: 'GET', signal: controller.signal });
-    }
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 1, jsonrpc: '2.0', method: 'system_chain', params: [] }),
+      signal: controller.signal,
+    });
+    let body = null;
+    try { body = await res.json(); } catch { /* not JSON, leave null */ }
+    const result = body && typeof body === 'object' ? body.result : null;
     return {
       statusCode: res.status,
       edgeServer: res.headers.get('server') ?? null,
+      rpcChainName: typeof result === 'string' && result.length > 0 ? result : null,
     };
   } catch (err) {
     if (err.name === 'AbortError') {
@@ -271,11 +314,17 @@ async function probe(url) {
   } catch (err) {
     if (err.code !== 'WS_MISSING') throw err;
     stderr.write(
-      'NOTE: `ws` package not installed; falling back to TCP-level reachability probe. ' +
-      'For a full WSS handshake verdict run: npm i ws\n',
+      'WARN: `ws` package not installed; falling back to TCP-level reachability probe.\n' +
+      'WARN: TCP-level success does NOT imply application-layer reachability — a blocking\n' +
+      'WARN: layer such as AWS ELB completes the TCP/TLS handshake before issuing 403 at\n' +
+      'WARN: the HTTP layer. For a definitive verdict run: npm i ws\n',
     );
     const tcp = await probeTcp(url);
-    return { ...tcp, statusCode: tcp.tcpOk ? STATUS_SWITCHING_PROTOCOLS : null };
+    return {
+      ...tcp,
+      statusCode: tcp.tcpOk ? STATUS_SWITCHING_PROTOCOLS : null,
+      tcpFallback: true,
+    };
   }
 }
 
@@ -290,8 +339,15 @@ async function main() {
     return;
   }
   if (parsed.help) {
-    printUsage(stdout);
-    process.exitCode = EXIT_OK;
+    if (parsed.helpRequested) {
+      printUsage(stdout);
+      process.exitCode = EXIT_OK;
+    } else {
+      // Zero-args invocation: usage on stderr, non-zero exit.
+      stderr.write('ERROR: missing required <rpc-url> argument\n\n');
+      printUsage(stderr);
+      process.exitCode = EXIT_BAD_INPUT;
+    }
     return;
   }
 
@@ -309,17 +365,28 @@ async function main() {
     edgeServer: result.edgeServer,
     scheme: url.protocol.replace(':', ''),
     networkErrorCode,
+    rpcChainName: result.rpcChainName ?? null,
+    tcpFallback: Boolean(result.tcpFallback),
   });
 
-  const reachable =
-    !networkErrorCode &&
-    (result.statusCode === STATUS_OK || result.statusCode === STATUS_SWITCHING_PROTOCOLS);
+  // Reachable = (a) HTTPS path returned a non-empty JSON-RPC result, OR
+  // (b) WSS path got a 101 Switching Protocols (real handshake — NOT the
+  // synthetic 101 from the TCP fallback, which only confirms socket open).
+  const httpsHealthy =
+    result.statusCode === STATUS_OK &&
+    typeof result.rpcChainName === 'string' &&
+    result.rpcChainName.length > 0;
+  const wssHealthy =
+    result.statusCode === STATUS_SWITCHING_PROTOCOLS && !result.tcpFallback;
+  const reachable = !networkErrorCode && (httpsHealthy || wssHealthy);
 
   const verdict = {
     url: url.toString(),
     reachable,
     statusCode: result.statusCode,
     edgeServer: result.edgeServer,
+    rpcChainName: result.rpcChainName ?? null,
+    tcpFallback: Boolean(result.tcpFallback),
     networkErrorCode,
     diagnosis,
     recommendation,

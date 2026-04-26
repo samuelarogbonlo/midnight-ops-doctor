@@ -68,7 +68,7 @@ Fill in your own values in the manifest first, or keep a private `deploy-manifes
 - `SKILL.md` — entry point. A triage table that maps a symptom to a runbook.
 - `references/` — eight runbooks: three-address model, wallet lifecycle, network chooser, DUST registration, cross-family hashlocks, symptom catalog (twenty indexed errors), version compatibility, Groth16 vk-mismatch playbook.
 - `scripts/` — four diagnostics:
-  - `address-derive.mjs <seed>` derives all three Midnight addresses
+  - `address-derive.mjs --seed-from-stdin` derives all three Midnight addresses (seed read from stdin to avoid leaking via argv / process listing / shell history)
   - `rpc-reachability-probe.mjs <wss-url>` checks if a Midnight RPC is reachable from this machine
   - `persistent-hash-self-test.mjs` confirms `persistentHash` matches Node SHA-256 on golden vectors
   - `deploy-verifier.mjs <manifest.json>` runs a seven-check post-deploy smoke test
