@@ -4,11 +4,24 @@
 [![Works in Claude Code · Codex · Cursor](https://img.shields.io/badge/works%20in-Claude%20Code%20·%20Codex%20·%20Cursor-blue)](#install)
 [![Status: v0.1.0](https://img.shields.io/badge/status-v0.1.0-green)](CHANGELOG.md)
 
-Notes from running a Midnight Network backend in production. Symptom on the left, fix on the right. Set up as a Claude Code skill, but the content reads fine as a plain reference if you read it directly.
+midnight-ops-doctor is a skill that turns Claude (or Codex, Cursor, any markdown-reading agent) into a Midnight Network operations expert. Symptom on the left, canonical fix on the right. Birthed from running a cross-chain shielded-swap protocol on Midnight in production — every entry came from hitting a wall, climbing it, and writing down what worked.
 
 ## Why this exists
 
-Without this skill, ask Claude about a Midnight `Custom error: 139` and you get generic blockchain advice or "I don't have specific info on Midnight." With it, the AI routes to the canonical sync-completion fix and gives you a runnable code snippet in one response. Same for `deployContract()` hangs, three-address confusion, AWS ELB cloud-IP RPC blocks, AWS WAF 8KB submitTx errors, DUST registration, persistentHash hashlock mismatches, and Groth16 verifier vk drifts.
+Without this skill, ask Claude about a Midnight `Custom error: 139` and you get generic blockchain advice or "I don't have specific info on Midnight." With it, the AI routes to the canonical sync-completion fix and gives you a runnable code snippet in one response.
+
+Given that Midnight is a growing ecosystem, this skill is built to solve:
+
+- The wallet sync trap: `Custom error: 139` from submitting before sync completes.
+- The `deployContract()` hang — SDK helper with no timeout, replaced by a six-phase manual flow.
+- Three-address confusion: one seed gives three addresses, and `getWalletAddress()` returns the wrong one for most operations.
+- AWS infra in the way: ELB blocking cloud-IP traffic on preprod RPC (HTTP 403), WAF silently dropping POST bodies above 8KB (kills deploy txs). Both have workarounds bundled.
+- DUST registration mechanics: DUST is not transferable; `dustReceiverAddress` is the only redirect path.
+- `persistentHash` vs Node SHA-256 parity for cross-family HTLCs (Midnight ↔ EVM).
+- Groth16 verifier vk drift between local zkey and on-chain bytecode — the bug class that lost real funds at FOOM Club and Veil Protocol.
+- ESM-only `@midnight-ntwrk/*` packages crashing CJS backends with `ERR_UNSUPPORTED_DIR_IMPORT`.
+
+And more as the ecosystem expands.
 
 ## Install
 
