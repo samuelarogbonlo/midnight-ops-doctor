@@ -1,8 +1,8 @@
 /**
- * Fusion RPC Proxy — Cloudflare Worker
+ * Midnight RPC Proxy — Cloudflare Worker
  *
  * Reverse-proxies wss://rpc.preprod.midnight.network (and HTTPS fallback) to
- * bypass AWS ELB's ASN-scoped IP-reputation block against our GCP egress.
+ * bypass AWS ELB's ASN-scoped IP-reputation block against cloud egress.
  *
  * Design constraints:
  *   - Preserve SNI/Host = rpc.preprod.midnight.network (wildcard cert binding).
@@ -267,7 +267,7 @@ async function handleCanary(): Promise<Response> {
     const probe = await fetch(UPSTREAM_ORIGIN_HTTPS + '/', {
       method: 'GET',
       // Keep headers minimal — we only care about reachability / ELB verdict.
-      headers: { 'user-agent': 'fusion-rpc-proxy-canary/1' },
+      headers: { 'user-agent': 'midnight-rpc-proxy-canary/1' },
     });
     upstreamStatus = probe.status;
     server = probe.headers.get('server');
