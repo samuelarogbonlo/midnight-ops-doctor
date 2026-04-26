@@ -51,7 +51,7 @@ Expected: offers to run `scripts/deploy-verifier.mjs` against your manifest; on 
 
 ## The deploy verifier
 
-The one script worth singling out. Catches the bug where your local `.zkey` and your deployed Groth16 verifier don't match. Same bug class that lost funds at FOOM Club and Veil Protocol.
+The one script worth singling out. Catches the bug where your local `.zkey` and your deployed Groth16 verifier don't match. The same broad failure mode — a misconfigured Groth16 verifier — drained funds from [FOOM Club](https://dev.to/cryip/the-18m-foom-club-exploit-when-a-groth16-verifier-misconfiguration-breaks-soundness-5b9) and [Veil Protocol](https://blog.zksecurity.xyz/posts/groth16-setup-exploit/).
 
 ```bash
 node scripts/deploy-verifier.mjs assets/deploy-manifest.example.json
