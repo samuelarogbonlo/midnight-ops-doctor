@@ -2,13 +2,13 @@
 
 ## Reporting a vulnerability
 
-For security-relevant findings, please don't open a public issue. Email the maintainer at `samuel.arogbonlo@p2p.org` with:
+For security-relevant findings, please don't open a public issue. Email the maintainer at `sbayo971@gmail.com` with:
 
 - A description of the issue and its impact.
 - Steps to reproduce, ideally a minimal manifest or input that triggers it.
 - Your contact handle (GitHub, email, X, whatever you prefer for follow-up).
 
-You'll get an acknowledgement within 72 hours. Coordinated disclosure is preferred.
+You'll get an acknowledgement within 12 hours. Coordinated disclosure is preferred.
 
 ## Threat model
 
