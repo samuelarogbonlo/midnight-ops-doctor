@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Works in Claude Code · Codex · Cursor](https://img.shields.io/badge/works%20in-Claude%20Code%20·%20Codex%20·%20Cursor-blue)](#install)
-[![Status: v0.1.0](https://img.shields.io/badge/status-v0.1.0-green)](CHANGELOG.md)
+[![Status: v0.1.1](https://img.shields.io/badge/status-v0.1.1-green)](CHANGELOG.md)
 
 midnight-ops-doctor is a skill that turns Claude (or Codex, Cursor, any markdown-reading agent) into a [Midnight Network](https://midnight.network/) operations expert. Birthed from running a cross-chain shielded-swap protocol on Midnight in production — every entry came from hitting a wall, climbing it, and writing down what worked.
 
