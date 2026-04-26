@@ -23,10 +23,15 @@ And more as the ecosystem expands.
 
 ## Install
 
-In Claude Code, symlink and restart:
+```bash
+git clone https://github.com/samuelarogbonlo/midnight-ops-doctor.git
+cd midnight-ops-doctor
+```
+
+Then, in Claude Code, symlink and restart:
 
 ```bash
-ln -s "$(pwd)/midnight-ops-doctor" ~/.claude/skills/midnight-ops-doctor
+ln -s "$(pwd)" ~/.claude/skills/midnight-ops-doctor
 ```
 
 In any other agent (Codex, Cursor, Cline, Aider, Claude API): point the agent at `SKILL.md` as a project instruction file. Scripts run with `node` directly, no Claude-specific dependencies.
