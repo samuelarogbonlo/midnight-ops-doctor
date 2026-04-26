@@ -1,10 +1,10 @@
 ---
-name: midnight-network-dev
+name: midnight-ops-doctor
 description: Diagnostic playbook for Midnight Network backend ops. Triggers on wallet sync stalls (appliedIndex, isStrictlyComplete, Custom error 139), deploy hangs (deployContract, watchForTxData), three-address confusion (Zswap coinPublicKey, NightExternal bech32m, Dust publicKey), DUST zero-balance and registerNightUtxosForDustGeneration, cloud-IP RPC 403 from AWS ELB on GCP/DO/AWS, AWS WAF 8KB submitTx (use wallet.submitTransaction), Turnstile faucet errors, persistentHash vs SHA256 hashlock mismatches in EVM-Midnight HTLCs, proof-server version drift (ledger-v7/v8), Groth16 verifier vk mismatches (SettlementVerifier, settlement_proof_final.zkey), @midnight-ntwrk ESM import errors (ERR_UNSUPPORTED_DIR_IMPORT, wallet-sdk-facade), NIGHT/tNIGHT backend funding. Does NOT trigger for Compact syntax (sealed, disclose, witness), circuit/contract authoring, or compiler install — route to ADAvault or midnight-mcp. Does NOT trigger for generic ZK theory, generic Solidity/viem bugs, generic 403, tokenomics, or browser Lace UI.
-version: 0.1.0
+license: MIT
 ---
 
-# midnight-network-dev
+# midnight-ops-doctor
 
 Notes from running a Midnight Network backend in production. Look up your symptom in the triage table, follow the link to the runbook.
 
@@ -409,7 +409,7 @@ This is built as a Claude Code skill. The content also works in any agent that c
 
 | Agent | Activation |
 |---|---|
-| Claude Code (CLI + IDE) | Symlink the bundle into `~/.claude/skills/midnight-network-dev/`. Frontmatter triggers on Midnight symptoms. |
+| Claude Code (CLI + IDE) | Symlink the bundle into `~/.claude/skills/midnight-ops-doctor/`. Frontmatter triggers on Midnight symptoms. |
 | Claude Desktop / claude.ai | Upload as a Skill via Settings → Capabilities. Frontmatter triggers natively. |
 | Claude API | Include `SKILL.md` as part of a system prompt. Pre-bundle deps; the API sandbox has no runtime install. |
 | Codex / Cursor / Cline / Aider | Point the agent at `SKILL.md` as a project instruction file (e.g., `cp SKILL.md ./AGENTS.md`). Scripts run with `node` directly. |

@@ -65,7 +65,7 @@ The full Worker is shipped in `assets/cloudflare-worker-template/`:
 ### Deploy steps
 
 ```bash
-cd midnight-network-dev/assets/cloudflare-worker-template
+cd midnight-ops-doctor/assets/cloudflare-worker-template
 npm install
 
 # Edit wrangler.toml: replace the route pattern with your custom domain.

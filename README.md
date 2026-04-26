@@ -1,4 +1,8 @@
-# midnight-network-dev
+# midnight-ops-doctor
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Works in Claude Code · Codex · Cursor](https://img.shields.io/badge/works%20in-Claude%20Code%20·%20Codex%20·%20Cursor-blue)](#using-it)
+[![Status: v0.1.0](https://img.shields.io/badge/status-v0.1.0-green)](CHANGELOG.md)
 
 Notes from running a Midnight Network backend in production. Symptom on the left, fix on the right. Set up as a Claude Code skill, but the content reads fine as a plain reference if you read it directly.
 
@@ -18,10 +22,28 @@ Notes from running a Midnight Network backend in production. Symptom on the left
 In Claude Code, symlink and restart:
 
 ```bash
-ln -s "$(pwd)/midnight-network-dev" ~/.claude/skills/midnight-network-dev
+ln -s "$(pwd)/midnight-ops-doctor" ~/.claude/skills/midnight-ops-doctor
 ```
 
 In any other agent (Codex, Cursor, Cline, Aider, Claude API): point the agent at `SKILL.md` as a project instruction file. Scripts run with `node` directly, no Claude-specific dependencies.
+
+## Verify it's wired up
+
+After installing, paste this into a fresh Claude session:
+
+> My Midnight wallet is stuck syncing at 47%, appliedIndex isn't moving.
+
+Expected response: Claude routes you to `references/wallet-lifecycle.md` § Sync stalls within one turn, with a code snippet that gates submission on `isStrictlyComplete`. If activation fires but the wrong doc loads, the frontmatter triggers need tuning. Open an issue.
+
+Two more verification prompts you can try:
+
+> I'm getting 403 from rpc.preprod.midnight.network on a GCP VM.
+
+Expected: routes to `references/network-chooser.md` § Cloud-IP block, identifies AWS ELB (not Cloudflare), points at the bundled Cloudflare Worker template.
+
+> How do I verify my deployed Groth16 SettlementVerifier actually matches my local zkey?
+
+Expected: offers to run `scripts/deploy-verifier.mjs` against your manifest; on FAIL routes to `references/groth16-vk-mismatch.md` for incident response.
 
 ## The deploy verifier
 
@@ -39,7 +61,7 @@ If the verifier reports `vk byte-equality FAIL`, read `references/groth16-vk-mis
 
 - Twelve acceptance scenarios pass: each routes a verbatim user symptom through the SKILL.md decision tree to a runbook with a runnable fix.
 - Scripts are sanity-checked: `--help` exits zero, bad inputs exit non-zero with clean errors, the persistent-hash self-test passes Node SHA-256 baselines, the deploy verifier was tested end-to-end against a real Arbitrum Sepolia + Midnight preview deployment (positive case passes; negative case pointed at a known-stale verifier fails Check 5 with the specific scalar mismatch).
-- A security pass on `deploy-verifier.mjs` fixed nine issues including shell injection in the snarkjs wrapper, false-pass on short vk scalars (a zero scalar produced a two-byte needle that matches nearly every contract), SSRF via `file://` URLs, and token leakage in error messages.
+- A security pass on `deploy-verifier.mjs` fixed nine issues including shell injection in the snarkjs wrapper, false-pass on short vk scalars (a zero scalar produced a two-byte needle that matches nearly every contract), SSRF via `file://` URLs, and token leakage in error messages. See `SECURITY.md`.
 
 ## Where this came from
 

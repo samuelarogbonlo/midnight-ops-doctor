@@ -126,7 +126,7 @@ The `MidnightProvider.submitTx` field on your providers bundle should delegate t
 **Fix:** Deploy the bundled Cloudflare Worker reverse-proxy from `assets/cloudflare-worker-template/`:
 
 ```bash
-cd midnight-network-dev/assets/cloudflare-worker-template
+cd midnight-ops-doctor/assets/cloudflare-worker-template
 npm install
 $EDITOR wrangler.toml   # set route pattern to your custom domain
 npx wrangler login
