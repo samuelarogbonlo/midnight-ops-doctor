@@ -1,23 +1,16 @@
 # midnight-ops-doctor
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Works in Claude Code · Codex · Cursor](https://img.shields.io/badge/works%20in-Claude%20Code%20·%20Codex%20·%20Cursor-blue)](#using-it)
+[![Works in Claude Code · Codex · Cursor](https://img.shields.io/badge/works%20in-Claude%20Code%20·%20Codex%20·%20Cursor-blue)](#install)
 [![Status: v0.1.0](https://img.shields.io/badge/status-v0.1.0-green)](CHANGELOG.md)
 
 Notes from running a Midnight Network backend in production. Symptom on the left, fix on the right. Set up as a Claude Code skill, but the content reads fine as a plain reference if you read it directly.
 
-## What's in here
+## Why this exists
 
-- `SKILL.md` — entry point. A triage table that maps a symptom to a runbook.
-- `references/` — eight runbooks: three-address model, wallet lifecycle, network chooser, DUST registration, cross-family hashlocks, symptom catalog (twenty indexed errors), version compatibility, Groth16 vk-mismatch playbook.
-- `scripts/` — four diagnostics:
-  - `address-derive.mjs <seed>` derives all three Midnight addresses
-  - `rpc-reachability-probe.mjs <wss-url>` checks if a Midnight RPC is reachable from this machine
-  - `persistent-hash-self-test.mjs` confirms `persistentHash` matches Node SHA-256 on golden vectors
-  - `deploy-verifier.mjs <manifest.json>` runs a seven-check post-deploy smoke test
-- `assets/` — Cloudflare worker template for cloud RPC blocks, and the example manifest for the deploy verifier.
+Without this skill, ask Claude about a Midnight `Custom error: 139` and you get generic blockchain advice or "I don't have specific info on Midnight." With it, the AI routes to the canonical sync-completion fix and gives you a runnable code snippet in one response. Same for `deployContract()` hangs, three-address confusion, AWS ELB cloud-IP RPC blocks, AWS WAF 8KB submitTx errors, DUST registration, persistentHash hashlock mismatches, and Groth16 verifier vk drifts.
 
-## Using it
+## Install
 
 In Claude Code, symlink and restart:
 
@@ -57,15 +50,23 @@ The bundled manifest is a placeholder template. Fill in your own deployment valu
 
 If the verifier reports `vk byte-equality FAIL`, read `references/groth16-vk-mismatch.md`. That doc walks through the incident response: how to identify the canonical zkey, choose between redeploying the verifier and restoring the local zkey, communicate to users with locked funds, and prevent recurrence.
 
+## What's in here
+
+- `SKILL.md` — entry point. A triage table that maps a symptom to a runbook.
+- `references/` — eight runbooks: three-address model, wallet lifecycle, network chooser, DUST registration, cross-family hashlocks, symptom catalog (twenty indexed errors), version compatibility, Groth16 vk-mismatch playbook.
+- `scripts/` — four diagnostics:
+  - `address-derive.mjs <seed>` derives all three Midnight addresses
+  - `rpc-reachability-probe.mjs <wss-url>` checks if a Midnight RPC is reachable from this machine
+  - `persistent-hash-self-test.mjs` confirms `persistentHash` matches Node SHA-256 on golden vectors
+  - `deploy-verifier.mjs <manifest.json>` runs a seven-check post-deploy smoke test
+- `assets/` — Cloudflare worker template for cloud RPC blocks, and the example manifest for the deploy verifier.
+
 ## Validation
 
 - Twelve acceptance scenarios pass: each routes a verbatim user symptom through the SKILL.md decision tree to a runbook with a runnable fix.
 - Scripts are sanity-checked: `--help` exits zero, bad inputs exit non-zero with clean errors, the persistent-hash self-test passes Node SHA-256 baselines, the deploy verifier was tested end-to-end against a real Arbitrum Sepolia + Midnight preview deployment (positive case passes; negative case pointed at a known-stale verifier fails Check 5 with the specific scalar mismatch).
 - A security pass on `deploy-verifier.mjs` fixed nine issues including shell injection in the snarkjs wrapper, false-pass on short vk scalars (a zero scalar produced a two-byte needle that matches nearly every contract), SSRF via `file://` URLs, and token leakage in error messages. See `SECURITY.md`.
-
-## Where this came from
-
-Built from running a cross-chain shielded-swap protocol on Midnight. Every fix in here came from hitting a wall, climbing it, and writing down what worked. The reference implementation is one specific codebase. The patterns transfer to any Midnight backend.
+- Built from running a cross-chain shielded-swap protocol on Midnight in production. The patterns transfer to any Midnight backend.
 
 ## License
 
