@@ -33,33 +33,35 @@ In any other agent (Codex, Cursor, Cline, Aider, Claude API): point the agent at
 
 ## Verify it's wired up
 
-After installing, paste this into a fresh Claude session:
+After installing, paste any of these into a fresh Claude session:
 
-> My Midnight wallet is stuck syncing at 47%, appliedIndex isn't moving.
+```
+My Midnight wallet is stuck syncing at 47%, appliedIndex isn't moving.
+```
 
-Expected response: Claude routes you to `references/wallet-lifecycle.md` § Sync stalls within one turn, with a code snippet that gates submission on `isStrictlyComplete`. If activation fires but the wrong doc loads, the frontmatter triggers need tuning. Open an issue.
+Expected: routes to `references/wallet-lifecycle.md` § Sync stalls with a `isStrictlyComplete` gate snippet.
 
-Two more verification prompts you can try:
+```
+I'm getting 403 from rpc.preprod.midnight.network on a GCP VM.
+```
 
-> I'm getting 403 from rpc.preprod.midnight.network on a GCP VM.
+Expected: routes to `references/network-chooser.md` § Cloud-IP block, identifies AWS ELB, points at the bundled Cloudflare Worker template.
 
-Expected: routes to `references/network-chooser.md` § Cloud-IP block, identifies AWS ELB (not Cloudflare), points at the bundled Cloudflare Worker template.
+```
+How do I verify my deployed Groth16 SettlementVerifier actually matches my local zkey?
+```
 
-> How do I verify my deployed Groth16 SettlementVerifier actually matches my local zkey?
-
-Expected: offers to run `scripts/deploy-verifier.mjs` against your manifest; on FAIL routes to `references/groth16-vk-mismatch.md` for incident response.
+Expected: offers to run `scripts/deploy-verifier.mjs`; on FAIL routes to `references/groth16-vk-mismatch.md`.
 
 ## The deploy verifier
 
-The one script worth singling out. Catches the bug where your local `.zkey` and your deployed Groth16 verifier don't match. The same broad failure mode — a misconfigured Groth16 verifier — drained funds from [FOOM Club](https://dev.to/cryip/the-18m-foom-club-exploit-when-a-groth16-verifier-misconfiguration-breaks-soundness-5b9) and [Veil Protocol](https://blog.zksecurity.xyz/posts/groth16-setup-exploit/).
+Catches the bug where your local `.zkey` and your deployed Groth16 verifier don't match — the same broad failure mode that drained funds from [FOOM Club](https://dev.to/cryip/the-18m-foom-club-exploit-when-a-groth16-verifier-misconfiguration-breaks-soundness-5b9) and [Veil Protocol](https://blog.zksecurity.xyz/posts/groth16-setup-exploit/).
 
 ```bash
 node scripts/deploy-verifier.mjs assets/deploy-manifest.example.json
 ```
 
-The bundled manifest is a placeholder template. Fill in your own deployment values before running. For private real-address validation, drop a `deploy-manifest.local.json` next to it (gitignored).
-
-If the verifier reports `vk byte-equality FAIL`, read `references/groth16-vk-mismatch.md`. That doc walks through the incident response: how to identify the canonical zkey, choose between redeploying the verifier and restoring the local zkey, communicate to users with locked funds, and prevent recurrence.
+Fill in your own values in the manifest first, or keep a private `deploy-manifest.local.json` next to it (gitignored). On Check 5 FAIL, see `references/groth16-vk-mismatch.md`.
 
 ## What's in here
 
