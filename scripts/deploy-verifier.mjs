@@ -24,7 +24,7 @@
  *   - cloud-IP block (AWS ELB 403):  references/network-chooser.md § Cloud-IP
  */
 
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, rmSync } from 'node:fs';
 import { resolve, dirname, isAbsolute, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile as execFileCb } from 'node:child_process';
@@ -32,6 +32,7 @@ import { promisify } from 'node:util';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { lookup as dnsLookup } from 'node:dns/promises';
 
 // Prefer execFile over exec — argv array is passed verbatim, no shell, no
 // metacharacter injection from manifest-controlled paths. Critical because
@@ -83,6 +84,58 @@ function assertValidEnvVarName(name, fieldName) {
   }
 }
 
+// SSRF defence-in-depth: reject hostnames that resolve to private/loopback/
+// link-local IP space for fields that are intended to point at public Midnight
+// services (indexer, node RPC). Operator-supplied manifests are the typical
+// case — but if the manifest ever crosses a trust boundary (CI, a config repo
+// with looser ACLs, a corridor partner), this stops the easy IMDS / RFC1918
+// pivot. Operators running an internal indexer mirror in a VPC can opt out
+// via MIDNIGHT_ALLOW_PRIVATE_NETWORK=1.
+//
+// Wallet diagnostics URL is loopback-REQUIRED (handled separately) and the
+// proof-server / EVM RPC are loopback-TYPICAL (Anvil, local proof-server),
+// so neither gets this check — only the public-facing Midnight services do.
+function isPrivateOrLoopbackIp(ip) {
+  if (typeof ip !== 'string') return true;
+  // IPv4
+  if (/^127\./.test(ip)) return true;                       // loopback
+  if (/^10\./.test(ip)) return true;                        // RFC 1918
+  if (/^192\.168\./.test(ip)) return true;                  // RFC 1918
+  if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(ip)) return true; // RFC 1918
+  if (/^169\.254\./.test(ip)) return true;                  // link-local incl. AWS IMDS
+  if (/^0\./.test(ip)) return true;                         // current-network / unspec
+  // IPv6
+  const lower = ip.toLowerCase();
+  if (lower === '::1' || lower === '::') return true;
+  if (lower.startsWith('fe80:')) return true;               // link-local
+  if (/^f[cd][0-9a-f]{2}:/.test(lower)) return true;        // ULA fc00::/7
+  if (lower.startsWith('::ffff:')) {
+    // IPv4-mapped IPv6 — recurse on the embedded v4.
+    return isPrivateOrLoopbackIp(lower.slice('::ffff:'.length));
+  }
+  return false;
+}
+
+async function assertNonPrivateUrl(rawUrl, fieldName) {
+  if (process.env.MIDNIGHT_ALLOW_PRIVATE_NETWORK === '1') return;
+  let parsed;
+  try { parsed = new URL(rawUrl); } catch { return; /* assertSafeUrl already failed */ }
+  let resolved;
+  try {
+    resolved = await dnsLookup(parsed.hostname, { verbatim: true });
+  } catch {
+    // DNS failure isn't our problem — the subsequent fetch() will surface it
+    // with a clear error. We only block successful resolution to private space.
+    return;
+  }
+  if (isPrivateOrLoopbackIp(resolved.address)) {
+    throw new Error(
+      `${fieldName} resolves to a private/loopback IP. ` +
+      `Set MIDNIGHT_ALLOW_PRIVATE_NETWORK=1 to permit (e.g. internal indexer mirror).`,
+    );
+  }
+}
+
 // Redact any URL appearing in a free-form error message — replace host with
 // scheme + "[redacted-host]". CI logs may be public; manifest URLs may not be.
 function redactUrlsInString(s) {
@@ -127,6 +180,35 @@ function printCheck(idx, total, name, status, detail, extraLines = []) {
 // either operator error or hostile input designed to OOM the loader.
 const MAX_MANIFEST_BYTES = 64 * 1024;
 
+// Top-level keys recognized by the loader. Anything else (besides _comment*
+// and _<section>_disabled) emits a warning so a typo can't silently disarm
+// a section. Forward compatibility: bump this set when adding new sections.
+const KNOWN_TOP_KEYS = new Set([
+  'network', 'expectedGenesisHash', 'midnight', 'evm', 'proofServer', 'wallet',
+]);
+const DISABLEABLE_SECTIONS = new Set(['proofServer', 'wallet']);
+
+function warnUnknownManifestKeys(parsed) {
+  for (const key of Object.keys(parsed)) {
+    if (KNOWN_TOP_KEYS.has(key)) continue;
+    // Inline-comment idioms used in deploy-manifest.example.json: top-level
+    // `_comment_N` and field-scoped `_<fieldName>_comment`. Both are silent.
+    if (key.startsWith('_comment')) continue;
+    if (/^_[A-Za-z][A-Za-z0-9]*_comment$/.test(key)) continue;
+    const m = key.match(/^_([A-Za-z]+)_disabled$/);
+    if (m) {
+      if (!DISABLEABLE_SECTIONS.has(m[1])) {
+        console.error(
+          `WARN: manifest key "${key}" — "${m[1]}" is not a disable-able section. ` +
+          `Typo? Disable-able: ${[...DISABLEABLE_SECTIONS].join(', ')}`,
+        );
+      }
+      continue;
+    }
+    console.error(`WARN: manifest key "${key}" is not a recognized top-level key (will be ignored).`);
+  }
+}
+
 function loadManifest(path) {
   if (!existsSync(path)) {
     throw new Error(`Manifest not found: ${path}`);
@@ -151,6 +233,23 @@ function loadManifest(path) {
   if (!parsed.network || typeof parsed.network !== 'string') {
     throw new Error('Manifest.network is required (string)');
   }
+  // Reject the example-default chainId=0. A truthy-test elsewhere would treat
+  // 0 as "unset" and silently skip the chain ID guard — failing here at load
+  // time keeps that footgun out of every check function.
+  if (parsed.evm !== undefined) {
+    if (parsed.evm === null || typeof parsed.evm !== 'object' || Array.isArray(parsed.evm)) {
+      throw new Error('Manifest.evm must be an object if present');
+    }
+    if (parsed.evm.chainId !== undefined) {
+      if (!Number.isInteger(parsed.evm.chainId) || parsed.evm.chainId <= 0) {
+        throw new Error(
+          `Manifest.evm.chainId must be a positive integer (got ${JSON.stringify(parsed.evm.chainId)}). ` +
+          `Set it before running, or omit the evm section entirely.`,
+        );
+      }
+    }
+  }
+  warnUnknownManifestKeys(parsed);
   return parsed;
 }
 
@@ -549,6 +648,18 @@ async function checkMidnightContract(manifest) {
 // opcodes. We extract local vk JSON via snarkjs zkey export, then for each
 // 32-byte scalar in the vk, search the deployed bytecode for the PUSH32-prefixed
 // occurrence. Missing scalars = vk mismatch = FAIL.
+//
+// ASSUMPTIONS (re-verify if any of these stop being true):
+//   1. Verifier was generated by `snarkjs zkey export solidityverifier` with
+//      default codegen — uint256 constants inlined as PUSH opcodes. Hand-rolled
+//      verifiers, gnark/arkworks output, or non-default solc settings (e.g.
+//      `--via-ir` with aggressive constant deduplication) may break the
+//      PUSH-prefix search. Failure mode is FAIL, not false-PASS, so it errs
+//      toward the safe direction.
+//   2. snarkjs's deterministic codegen pins IC[] order. We verify scalar
+//      PRESENCE, not order, so a swapped-IC vk would PASS — but you cannot
+//      produce a swapped-IC vk via snarkjs without hand-editing the JSON.
+//   3. Curve = bn128, protocol = groth16. Anything else FAILs at vk parse.
 // =====================================================================
 
 function bigIntToHex32(scalarStr) {
@@ -633,25 +744,31 @@ async function exportLocalVk(zkeyPath) {
   const tmp = mkdtempSync(join(tmpdir(), 'deploy-verifier-'));
   const outPath = join(tmp, 'vk.json');
 
-  // Use execFile (no shell) so manifest-controlled zkey paths cannot inject
-  // shell metacharacters. Each argument is passed verbatim as argv[i].
   try {
-    await execFile(
-      snarkjsBin,
-      ['zkey', 'export', 'verificationkey', zkeyPath, outPath],
-      { timeout: 30_000, shell: false },
-    );
-  } catch (e) {
-    // Redact any absolute paths leaking from snarkjs stderr — keeps CI logs
-    // clean of local filesystem layout.
-    const raw = String(e.stderr || e.message || '');
-    const stderr = redactUrlsInString(redactAbsolutePathsInString(raw));
-    throw new Error(`snarkjs zkey export failed: ${stderr}`);
+    // Use execFile (no shell) so manifest-controlled zkey paths cannot inject
+    // shell metacharacters. Each argument is passed verbatim as argv[i].
+    try {
+      await execFile(
+        snarkjsBin,
+        ['zkey', 'export', 'verificationkey', zkeyPath, outPath],
+        { timeout: 30_000, shell: false },
+      );
+    } catch (e) {
+      // Redact any absolute paths leaking from snarkjs stderr — keeps CI logs
+      // clean of local filesystem layout.
+      const raw = String(e.stderr || e.message || '');
+      const stderr = redactUrlsInString(redactAbsolutePathsInString(raw));
+      throw new Error(`snarkjs zkey export failed: ${stderr}`);
+    }
+    if (!existsSync(outPath)) {
+      throw new Error('snarkjs zkey export produced no output');
+    }
+    return JSON.parse(readFileSync(outPath, 'utf8'));
+  } finally {
+    // Cleanup is best-effort: the run is already done either way and a stale
+    // /tmp/deploy-verifier-XXXXXX/ from a prior run shouldn't fail the next one.
+    try { rmSync(tmp, { recursive: true, force: true }); } catch { /* ignore */ }
   }
-  if (!existsSync(outPath)) {
-    throw new Error('snarkjs zkey export produced no output');
-  }
-  return JSON.parse(readFileSync(outPath, 'utf8'));
 }
 
 async function fetchDeployedBytecode(rpcUrl, address) {
@@ -985,16 +1102,56 @@ function checkDustBalance(manifest, walletDiag) {
       ],
     };
   }
-  // Format with 6 decimal places (DUST has 6 decimals on Midnight).
-  const human = (Number(tDust) / 1e6).toFixed(2);
-  return { status: STATUS.PASS, detail: `${human} tDUST` };
+  // DUST has 6 decimals on Midnight. Format via integer division on the BigInt
+  // so balances above Number.MAX_SAFE_INTEGER (~9e15 base units) stay precise.
+  return { status: STATUS.PASS, detail: `${formatDust(tDust)} tDUST` };
+}
+
+function formatDust(baseUnits) {
+  const SCALE = 1_000_000n;
+  const whole = baseUnits / SCALE;
+  const frac = baseUnits % SCALE;
+  // Two decimals to match the prior display.
+  const fracDisplay = (frac / 10_000n).toString().padStart(2, '0');
+  return `${whole.toString()}.${fracDisplay}`;
 }
 
 // =====================================================================
 // Main
 // =====================================================================
 
+// Node 20+ is the documented baseline (see SECURITY.md). Several deps —
+// AbortSignal.timeout, fetch(), node:dns/promises — assume it.
+const REQUIRED_NODE_MAJOR = 20;
+
+function assertNodeVersion() {
+  const major = parseInt(process.versions.node.split('.')[0], 10);
+  if (!Number.isFinite(major) || major < REQUIRED_NODE_MAJOR) {
+    console.error(`Fatal: Node ${REQUIRED_NODE_MAJOR}+ required (running ${process.versions.node})`);
+    process.exit(2);
+  }
+}
+
+// Public-service URLs (indexer, midnight RPC) must not resolve to private/
+// loopback IP space — this is the SSRF defence-in-depth check. Proof-server
+// and EVM RPC are intentionally excluded: both are commonly local (Anvil,
+// docker proof-server). Wallet diagnostics URL is loopback-required and
+// validated separately.
+async function validateManifestUrls(manifest) {
+  const checks = [];
+  if (manifest.midnight?.indexerUrl) {
+    checks.push(assertNonPrivateUrl(manifest.midnight.indexerUrl, 'manifest.midnight.indexerUrl'));
+  }
+  if (manifest.midnight?.rpcUrl) {
+    checks.push(assertNonPrivateUrl(manifest.midnight.rpcUrl, 'manifest.midnight.rpcUrl'));
+  }
+  // Promise.all rejects on the first private-IP hit; that's the desired
+  // fail-closed behaviour.
+  await Promise.all(checks);
+}
+
 async function main() {
+  assertNodeVersion();
   const args = process.argv.slice(2);
   // -h / --help is an explicit, successful invocation; exit 0.
   if (args.length === 1 && (args[0] === '-h' || args[0] === '--help')) {
@@ -1013,6 +1170,10 @@ async function main() {
   try { manifest = loadManifest(manifestPath); } catch (e) {
     // Errors from loadManifest are user-facing; never leak stack traces.
     console.error(`Manifest error: ${e.message}`);
+    process.exit(2);
+  }
+  try { await validateManifestUrls(manifest); } catch (e) {
+    console.error(`Manifest URL error: ${e.message}`);
     process.exit(2);
   }
 

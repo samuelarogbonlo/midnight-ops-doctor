@@ -18,6 +18,10 @@ const UPSTREAM_ORIGIN_HTTPS = `https://${UPSTREAM_HOST}`;
 const UPSTREAM_ORIGIN_WS_HANDSHAKE = `https://${UPSTREAM_HOST}`;
 
 // Headers that must not be forwarded to the upstream; CF sets/strips these.
+// `cf-*` is handled via prefix below — anything CF adds (geo enrichment like
+// cf-ipcity, cf-iplatitude, cf-iplongitude, cf-ipasn; routing metadata like
+// cf-ray, cf-worker; cf-connecting-ip; future additions) gets stripped without
+// requiring an explicit list.
 const HOP_BY_HOP_HEADERS: ReadonlySet<string> = new Set([
   'connection',
   'keep-alive',
@@ -27,18 +31,33 @@ const HOP_BY_HOP_HEADERS: ReadonlySet<string> = new Set([
   'trailer',
   'transfer-encoding',
   'upgrade',
-  // CF-specific headers we do not want to leak upstream.
-  'cf-connecting-ip',
-  'cf-ipcountry',
-  'cf-ray',
-  'cf-visitor',
-  'cf-worker',
-  'cf-ew-via',
+  // Forwarding metadata — leaks the original client IP / host / proto chain
+  // to the upstream. Substrate doesn't use these and operators do not want
+  // them in node logs.
+  'forwarded',
+  'x-forwarded-for',
+  'x-forwarded-host',
+  'x-forwarded-port',
   'x-forwarded-proto',
   'x-real-ip',
   // Host is reset by the runtime when we fetch against a different origin.
   'host',
 ]);
+
+function shouldStripHeader(name: string): boolean {
+  const lower = name.toLowerCase();
+  if (HOP_BY_HOP_HEADERS.has(lower)) return true;
+  // CF-injected metadata: connecting IP, ray ID, geo enrichment, worker
+  // chain. Prefix-strip avoids missing future additions to the cf-* family.
+  if (lower.startsWith('cf-')) return true;
+  return false;
+}
+
+// Idle WebSocket sessions that don't send messages from either side hold
+// Worker resources until CF's wall-clock cap. Most Substrate subscriptions
+// (e.g. author_submitAndWatchExtrinsic) emit progress events every few
+// seconds; a session quiet for a full minute is almost certainly dead.
+const WS_IDLE_TIMEOUT_MS = 60_000;
 
 type CanaryStatus = 'healthy' | 'blocked' | 'unknown';
 
@@ -103,7 +122,7 @@ async function handleHttp(request: Request, url: URL): Promise<Response> {
 function buildUpstreamRequest(request: Request, upstreamUrl: URL): Request {
   const headers = new Headers();
   for (const [name, value] of request.headers) {
-    if (HOP_BY_HOP_HEADERS.has(name.toLowerCase())) continue;
+    if (shouldStripHeader(name)) continue;
     headers.set(name, value);
   }
 
@@ -127,7 +146,7 @@ function methodAllowsBody(method: string): boolean {
 function filterResponseHeaders(source: Headers): Headers {
   const out = new Headers();
   for (const [name, value] of source) {
-    if (HOP_BY_HOP_HEADERS.has(name.toLowerCase())) continue;
+    if (shouldStripHeader(name)) continue;
     out.set(name, value);
   }
   return out;
@@ -149,9 +168,9 @@ async function handleWebSocket(
 
   const upstreamHeaders = new Headers();
   for (const [name, value] of request.headers) {
-    const lower = name.toLowerCase();
-    if (HOP_BY_HOP_HEADERS.has(lower)) continue;
-    // Must preserve Sec-WebSocket-Protocol if present (subprotocol negotiation).
+    if (shouldStripHeader(name)) continue;
+    // Sec-WebSocket-Protocol is NOT in the strip list, so subprotocol
+    // negotiation passes through unchanged.
     upstreamHeaders.set(name, value);
   }
   upstreamHeaders.set('Upgrade', 'websocket');
@@ -200,14 +219,35 @@ function pipeWebSockets(
 ): Promise<void> {
   return new Promise((resolve) => {
     let settled = false;
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
     const finish = (): void => {
       if (settled) return;
       settled = true;
+      if (idleTimer !== null) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
       resolve();
     };
 
+    const resetIdleTimer = (): void => {
+      if (settled) return;
+      if (idleTimer !== null) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        // No traffic in either direction for the timeout window. Tear down
+        // both ends with a policy-violation code so a misbehaving client
+        // can't pin a Worker session indefinitely.
+        safeClose(upstreamSide, 1008, 'idle_timeout');
+        safeClose(clientSide, 1008, 'idle_timeout');
+        finish();
+      }, WS_IDLE_TIMEOUT_MS);
+    };
+    resetIdleTimer();
+
     // Client -> upstream
     clientSide.addEventListener('message', (event) => {
+      resetIdleTimer();
       try {
         upstreamSide.send(event.data);
       } catch {
@@ -227,6 +267,7 @@ function pipeWebSockets(
 
     // Upstream -> client
     upstreamSide.addEventListener('message', (event) => {
+      resetIdleTimer();
       try {
         clientSide.send(event.data);
       } catch {
@@ -245,11 +286,14 @@ function pipeWebSockets(
   });
 }
 
+// RFC 6455 + IANA: codes 1004, 1005, 1006, and 1015 are reserved and MUST NOT
+// be sent by an endpoint. Forwarding them via close() rejects with TypeError
+// in strict runtimes; remap to 1000 (normal closure).
+const RESERVED_CLOSE_CODES: ReadonlySet<number> = new Set([1004, 1005, 1006, 1015]);
+
 function safeClose(socket: WebSocket, code: number, reason: string): void {
   try {
-    // Codes 1005/1006 are reserved and must not be set by endpoints; fall
-    // back to 1000 (normal) in that case.
-    const safeCode = code === 1005 || code === 1006 ? 1000 : code;
+    const safeCode = RESERVED_CLOSE_CODES.has(code) ? 1000 : code;
     socket.close(safeCode, reason);
   } catch {
     // Socket already closed — ignore.
@@ -263,16 +307,28 @@ function safeClose(socket: WebSocket, code: number, reason: string): void {
 async function handleCanary(): Promise<Response> {
   let upstreamStatus = 0;
   let server: string | null = null;
+  let body: unknown = null;
   try {
+    // Probe via a real Substrate JSON-RPC method instead of a bare GET. This
+    // is robust against the upstream changing its default-page handling
+    // (e.g. swapping 405 for 200/HTML or 426 Upgrade Required) — we now key
+    // on whether the node returned a valid JSON-RPC `result`. `system_chain`
+    // is the cheapest meaningful method: returns the chain name string.
     const probe = await fetch(UPSTREAM_ORIGIN_HTTPS + '/', {
-      method: 'GET',
-      // Keep headers minimal — we only care about reachability / ELB verdict.
-      headers: { 'user-agent': 'midnight-rpc-proxy-canary/1' },
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'user-agent': 'midnight-rpc-proxy-canary/1',
+      },
+      body: JSON.stringify({ id: 1, jsonrpc: '2.0', method: 'system_chain', params: [] }),
     });
     upstreamStatus = probe.status;
     server = probe.headers.get('server');
-    // Drain to avoid leaking the connection.
-    await probe.arrayBuffer().catch(() => undefined);
+    try {
+      body = await probe.json();
+    } catch {
+      body = null;
+    }
   } catch (err) {
     const result: CanaryResult = {
       status: 'unknown',
@@ -283,12 +339,20 @@ async function handleCanary(): Promise<Response> {
     return json(503, { ...result, error: errorMessage(err) });
   }
 
-  const status: CanaryStatus =
-    upstreamStatus === 405
-      ? 'healthy'
-      : upstreamStatus === 403
-        ? 'blocked'
-        : 'unknown';
+  // Healthy: 200 with a JSON-RPC envelope containing a non-empty `result`
+  // (the chain name). Blocked: 403 (the documented AWS ELB cloud-IP block).
+  // Anything else: unknown — log enough to triage without leaking bodies.
+  const hasJsonRpcResult =
+    upstreamStatus === 200 &&
+    body !== null &&
+    typeof body === 'object' &&
+    typeof (body as { result?: unknown }).result === 'string' &&
+    ((body as { result: string }).result.length > 0);
+  const status: CanaryStatus = hasJsonRpcResult
+    ? 'healthy'
+    : upstreamStatus === 403
+      ? 'blocked'
+      : 'unknown';
 
   const result: CanaryResult = {
     status,

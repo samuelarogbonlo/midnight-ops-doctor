@@ -18,11 +18,16 @@ Hardening already applied:
 
 - URL scheme whitelist (`http`, `https`, `ws`, `wss`). `file://`, `gopher://`, and similar are rejected before any `fetch()` call.
 - The wallet diagnostics URL is pinned to loopback (`127.0.0.1`, `localhost`, `::1`) only.
+- `manifest.midnight.indexerUrl` and `manifest.midnight.rpcUrl` reject hostnames resolving to private/loopback/link-local IP space (RFC 1918, 169.254.0.0/16 incl. AWS IMDS, IPv6 ULA / link-local). Operators running an internal mirror can opt out with `MIDNIGHT_ALLOW_PRIVATE_NETWORK=1`.
+- `manifest.evm.chainId` must be a positive integer. The previous default of `0` was treated as falsy by an internal guard and silently skipped chain-ID enforcement.
+- Unknown top-level manifest keys emit a `WARN` to stderr (catches `_proofServer_diabled` typos that would otherwise leave a section silently disabled).
 - snarkjs is invoked via `child_process.execFile` with an argv array and `shell: false`. Path arguments cannot inject shell metacharacters.
+- The temp directory created for the snarkjs vk export is cleaned up in a `finally` block; failed runs do not leak `/tmp/deploy-verifier-XXXXXX/`.
 - Manifest size capped at 64 KiB. The script refuses oversized input.
 - EVM verifier addresses are regex-validated (`0x` + 40 hex). Midnight contract addresses are typeof-checked.
 - vk byte-equality (Check 5) refuses to match scalars compressed to fewer than four bytes; this prevents a false-pass where a zero scalar's two-byte `PUSH1 0x00` needle matches nearly every contract's bytecode.
 - Error messages going to stdout are scrubbed for absolute paths and operator URLs to reduce leakage in CI logs.
+- Node 20+ is enforced at runtime; older runtimes are rejected before any I/O.
 
 If you find a way around any of these, the script-level threat model wants to know.
 

@@ -4,6 +4,18 @@ compatibility_date = "2025-10-01"
 
 # node_compat is NOT needed — we use only Web APIs (fetch, WebSocketPair).
 
+# Hardening note for public deployment:
+# This template ships intentionally permissive — anyone who learns the proxy
+# hostname can use it (cost-shifting onto your CF account). For preprod RPC
+# the upstream is itself anonymous so the practical leak is bandwidth +
+# Worker minutes, bounded by CF's free tier. Before pointing this at mainnet
+# or a paid plan, add at minimum:
+#   - A non-guessable subdomain (note: Certificate Transparency logs publish
+#     every CF-issued cert, so this is bounded obscurity, not secrecy).
+#   - CF zone-level rate limiting (Dashboard → Security → WAF → Rate limiting).
+#   - An Authorization shared-secret check at the top of fetch() in src/index.ts.
+# See references/network-chooser.md § Cloud-IP block for the threat model.
+
 # Bind the Worker to your hostname via Custom Domain, which auto-provisions
 # DNS + SSL. Plain `[[routes]]` with `zone_name` only creates the route
 # binding and assumes the DNS record already exists — which breaks first-time
