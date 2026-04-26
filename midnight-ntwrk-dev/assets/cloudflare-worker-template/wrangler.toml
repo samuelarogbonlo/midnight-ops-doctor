@@ -1,0 +1,17 @@
+name = "fusion-rpc-proxy"
+main = "src/index.ts"
+compatibility_date = "2025-10-01"
+
+# node_compat is NOT needed — we use only Web APIs (fetch, WebSocketPair).
+
+# Bind the Worker to the production hostname via Custom Domain, which
+# auto-provisions DNS + SSL. Plain `[[routes]]` with `zone_name` only creates
+# the route binding and assumes the DNS record already exists — which breaks
+# first-time deploy since the hostname never gets registered.
+[[routes]]
+pattern = "rpc-proxy.fusionprotocol.co"
+custom_domain = true
+
+# Observability: keep request logs on (status + URL path only; no bodies).
+[observability]
+enabled = true

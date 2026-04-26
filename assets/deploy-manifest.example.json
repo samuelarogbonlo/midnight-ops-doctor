@@ -1,0 +1,39 @@
+{
+  "_comment_1": "Example/schema manifest for scripts/deploy-verifier.mjs. Replace ALL placeholder addresses below with your actual deployments before running the verifier. The verifier auto-skips any top-level section that is absent.",
+  "_comment_2": "Public Midnight network endpoints (preview / preprod / mainnet) are network constants — leave them as-is unless you are running a Cloudflare Worker reverse-proxy (see references/network-chooser.md § 3).",
+  "_comment_3": "To enable the wallet-sync and proof-server checks, rename the keys '_proofServer_disabled' → 'proofServer' and '_wallet_disabled' → 'wallet', and ensure both services are running locally on the documented ports.",
+  "_comment_4": "Run from the skill root: `node scripts/deploy-verifier.mjs assets/deploy-manifest.example.json` (you will see SKIPs until you fill in real deployment values). For a private fusion-team-only manifest with live data, create deploy-manifest.local.json (gitignored) alongside this file.",
+
+  "network": "REPLACE_WITH_NETWORK_LABEL (e.g. arbitrum-sepolia + midnight-preview)",
+  "expectedGenesisHash": "0x801d3fc306115a3b538ea9498881c176376f8e3213464fe620fc1f359d13b880",
+
+  "midnight": {
+    "indexerUrl": "https://indexer.preview.midnight.network/api/v3/graphql",
+    "rpcUrl": "wss://rpc.preview.midnight.network",
+    "_contractAddress_comment": "Your deployed Midnight HTLC / contract address: 0x + 64 hex chars (32 bytes).",
+    "contractAddress": "0x0000000000000000000000000000000000000000000000000000000000000000"
+  },
+
+  "evm": {
+    "_rpcUrl_comment": "Your EVM RPC. For Arbitrum Sepolia: https://sepolia-rollup.arbitrum.io/rpc",
+    "rpcUrl": "https://YOUR_EVM_RPC_HERE/rpc",
+    "_chainId_comment": "EVM chain ID. Arbitrum Sepolia=421614, Base Sepolia=84532, mainnet=1.",
+    "chainId": 0,
+    "groth16Verifier": {
+      "_address_comment": "Your deployed Groth16 verifier contract address (40 hex chars).",
+      "address": "0x0000000000000000000000000000000000000000",
+      "_localZkeyPath_comment": "Path to the local .zkey that the deployed verifier was generated from. Relative to manifest location is fine.",
+      "localZkeyPath": "./build/YOUR_CIRCUIT_NAME_final.zkey"
+    }
+  },
+
+  "_proofServer_disabled": {
+    "url": "http://127.0.0.1:6300",
+    "expectedVersion": "8.0.3"
+  },
+
+  "_wallet_disabled": {
+    "diagnosticsUrl": "http://127.0.0.1:8765/wallet/diagnostics",
+    "diagnosticsTokenEnv": "MIDNIGHT_SIDECAR_TOKEN"
+  }
+}

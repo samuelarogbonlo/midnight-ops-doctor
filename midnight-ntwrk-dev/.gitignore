@@ -1,0 +1,15 @@
+# Local manifests with real deployment addresses — do not commit.
+# The bundled assets/deploy-manifest.example.json uses placeholders only.
+# Project-specific real-address manifests should go to assets/deploy-manifest.local.json
+# (or any *.local.json) and stay out of version control.
+assets/deploy-manifest.local.json
+assets/*.local.json
+assets/*.private.json
+
+# Test artifacts from running scripts/deploy-verifier.mjs against real deployments.
+# These can include extracted vk JSON, bytecode dumps, and other artifacts that may
+# leak addresses or zkey paths into a public bundle.
+test-artifacts/
+*.vk.json
+local-vk.json
+deployed-vk.json
