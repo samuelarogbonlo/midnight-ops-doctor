@@ -74,10 +74,10 @@ If the verifier reports `vk byte-equality FAIL`, read `references/groth16-vk-mis
 
 ## Validation
 
-- Twelve acceptance scenarios pass: each routes a verbatim user symptom through the SKILL.md decision tree to a runbook with a runnable fix.
-- Scripts are sanity-checked: `--help` exits zero, bad inputs exit non-zero with clean errors, the persistent-hash self-test passes Node SHA-256 baselines, the deploy verifier was tested end-to-end against a real Arbitrum Sepolia + Midnight preview deployment (positive case passes; negative case pointed at a known-stale verifier fails Check 5 with the specific scalar mismatch).
-- A security pass on `deploy-verifier.mjs` fixed nine issues including shell injection in the snarkjs wrapper, false-pass on short vk scalars (a zero scalar produced a two-byte needle that matches nearly every contract), SSRF via `file://` URLs, and token leakage in error messages. See `SECURITY.md`.
-- Built from running a cross-chain shielded-swap protocol on Midnight in production. The patterns transfer to any Midnight backend.
+- 12 real symptoms tested end-to-end. Each routes to the right runbook with a runnable fix.
+- 4 scripts sanity-checked. The deploy verifier was tested against a live Arbitrum Sepolia + Midnight preview deployment.
+- Security review on the deploy verifier fixed 9 issues. See `SECURITY.md`.
+- Battle-tested in production on a cross-chain shielded-swap protocol on Midnight.
 
 ## License
 
