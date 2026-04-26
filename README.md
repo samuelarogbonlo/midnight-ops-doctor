@@ -4,11 +4,9 @@
 [![Works in Claude Code · Codex · Cursor](https://img.shields.io/badge/works%20in-Claude%20Code%20·%20Codex%20·%20Cursor-blue)](#install)
 [![Status: v0.1.0](https://img.shields.io/badge/status-v0.1.0-green)](CHANGELOG.md)
 
-midnight-ops-doctor is a skill that turns Claude (or Codex, Cursor, any markdown-reading agent) into a Midnight Network operations expert. Symptom on the left, canonical fix on the right. Birthed from running a cross-chain shielded-swap protocol on Midnight in production — every entry came from hitting a wall, climbing it, and writing down what worked.
+midnight-ops-doctor is a skill that turns Claude (or Codex, Cursor, any markdown-reading agent) into a [Midnight Network](https://midnight.network/) operations expert. Birthed from running a cross-chain shielded-swap protocol on Midnight in production — every entry came from hitting a wall, climbing it, and writing down what worked.
 
 ## Why this exists
-
-Without this skill, ask Claude about a Midnight `Custom error: 139` and you get generic blockchain advice or "I don't have specific info on Midnight." With it, the AI routes to the canonical sync-completion fix and gives you a runnable code snippet in one response.
 
 Given that Midnight is a growing ecosystem, this skill is built to solve:
 
